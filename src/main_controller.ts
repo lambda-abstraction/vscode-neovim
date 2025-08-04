@@ -4,7 +4,6 @@ import path from "path";
 import { attach, findNvim, NeovimClient } from "neovim";
 import vscode, { Disposable, ExtensionKind, Range, window, type ExtensionContext } from "vscode";
 // eslint-disable-next-line import/no-extraneous-dependencies
-import { transports as loggerTransports, createLogger as winstonCreateLogger } from "winston";
 
 import actions from "./actions";
 import { BufferManager } from "./buffer_manager";
@@ -16,10 +15,7 @@ import { CursorManager } from "./cursor_manager";
 import { DocumentChangeManager } from "./document_change_manager";
 import { eventBus } from "./eventBus";
 import { HighlightManager } from "./highlight_manager";
-import { createLogger } from "./logger";
-import { MessagesManager } from "./messages_manager";
 import { ModeManager } from "./mode_manager";
-import { StatusLineManager } from "./status_line_manager";
 import { TypingManager } from "./typing_manager";
 import { disposeAll, findLastEvent, VSCodeContext, wslpath } from "./utils";
 import { ViewportManager } from "./viewport_manager";
@@ -27,8 +23,6 @@ import { ViewportManager } from "./viewport_manager";
 interface RequestResponse {
     send(resp: unknown, isError?: boolean): void;
 }
-
-const logger = createLogger("MainController");
 
 interface VSCodeActionOptions {
     args?: any[];
@@ -56,16 +50,13 @@ export class MainController implements vscode.Disposable {
     public cursorManager!: CursorManager;
     public commandsController!: CommandsController;
     public commandLineManager!: CommandLineManager;
-    public statusLineManager!: StatusLineManager;
     public highlightManager!: HighlightManager;
-    public messagesManager!: MessagesManager;
     public viewportManager!: ViewportManager;
 
     public constructor(private extContext: ExtensionContext) {}
 
     public async init(): Promise<void> {
         const [cmd, args] = this.buildSpawnArgs();
-        logger.info(`Starting nvim: ${cmd} ${args.join(" ")}`);
         this.nvimProc = spawn(cmd, args);
         this.disposables.push(
             new Disposable(() => {
@@ -83,15 +74,9 @@ export class MainController implements vscode.Disposable {
         this.nvimProc.on("close", (code, signal) => this._stop(`Neovim exited: ${code} ${signal}`));
         this.nvimProc.on("error", (err) => this._stop(`Neovim spawn error: ${err.message}`));
 
-        logger.debug(`Attaching to neovim`);
         this.client = attach({
             proc: this.nvimProc,
             options: {
-                logger: winstonCreateLogger({
-                    transports: [new loggerTransports.Console()],
-                    level: "error",
-                    exitOnError: false,
-                }),
             },
         });
         this.disposables.push(
@@ -122,7 +107,6 @@ export class MainController implements vscode.Disposable {
                 try {
                     await this.client.lua(luaCode);
                 } catch (e) {
-                    logger.error(e instanceof Error ? e.message : e);
                 }
             }),
             (this.modeManager = new ModeManager()),
@@ -134,11 +118,8 @@ export class MainController implements vscode.Disposable {
             (this.highlightManager = new HighlightManager(this)),
             (this.changeManager = new DocumentChangeManager(this)),
             (this.commandLineManager = new CommandLineManager(this)),
-            (this.statusLineManager = new StatusLineManager(this)),
-            (this.messagesManager = new MessagesManager(this)),
         );
 
-        logger.debug(`UIAttach`);
         // !Attach after setup of notifications, otherwise we can get blocking call and stuck
         await this.client.uiAttach(config.neovimViewportWidth, 100, {
             rgb: true,
@@ -157,7 +138,6 @@ export class MainController implements vscode.Disposable {
         await VSCodeContext.set("neovim.init", true);
         await this.logNvimInfo(); // Do this _after_ UIAttach.
         await this.validateNvimRuntime();
-        logger.debug(`Init completed`);
     }
 
     private _stop(msg: string) {
@@ -190,7 +170,6 @@ export class MainController implements vscode.Disposable {
         // And if we are not using WSL
         if (neovimPath === "nvim" && !config.useWsl) {
             const nvimResult = findNvim({ minVersion: NVIM_MIN_VERSION });
-            logger.debug("Find nvim result: ", nvimResult);
             const matched = nvimResult.matches.find((match) => !match.error);
             if (!matched) {
                 throw new Error("Unable to find a suitable neovim executable. Please check your neovim installation.");
@@ -288,8 +267,6 @@ export class MainController implements vscode.Disposable {
                     try {
                         await this.runAction(action, options);
                     } catch (err) {
-                        const errMsg = err instanceof Error ? err.message : err;
-                        logger.error("Error on notification: ", errMsg);
                     }
                 }
                 break;
@@ -352,7 +329,6 @@ export class MainController implements vscode.Disposable {
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : err;
                     response.send(errMsg, true);
-                    logger.error("Request error: ", errMsg);
                 }
                 break;
             }
@@ -362,7 +338,6 @@ export class MainController implements vscode.Disposable {
     private setClientInfo() {
         const versionString = this.extContext.extension.packageJSON.version as string;
         const [major, minor, patch] = [...versionString.split(".").map((n) => +n), 0, 0, 0];
-        logger.debug(`Setting client info: vscode-neovim ${major}.${minor}.${patch}`);
         this.client.setClientInfo("vscode-neovim", { major, minor, patch }, "embedder", {}, {});
     }
 
@@ -383,11 +358,9 @@ export class MainController implements vscode.Disposable {
         }
 
         if (cwd) {
-            logger.debug(`Setting current dir to: ${cwd}`);
             try {
                 await this.client.request("nvim_set_current_dir", [cwd]);
             } catch (e) {
-                logger.error(`Failed to set current dir: ${e}`);
             }
         }
     }
@@ -403,8 +376,7 @@ export class MainController implements vscode.Disposable {
             }
             return rv
         `;
-        const nvimInfo = await this.client.executeLua(luaCode, []);
-        logger.info("Nvim info:", nvimInfo);
+        await this.client.executeLua(luaCode, []);
     }
 
     private async validateNvimRuntime() {
@@ -413,12 +385,7 @@ export class MainController implements vscode.Disposable {
             local rt = vim.env.VIMRUNTIME
             return { vim.fs.dir(rt)() ~= nil, rt }
         `;
-        const ret = await this.client.executeLua(luaCode, []);
-        const [ok, runtimeDir] = ret as [boolean, string];
-        if (!ok)
-            logger.error(
-                `Cannot read $VIMRUNTIME directory "${runtimeDir}". Ensure that VSCode has access to that directory. Also try :checkhealth.`,
-            );
+        await this.client.executeLua(luaCode, []);
     }
 
     dispose() {

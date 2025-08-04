@@ -1,10 +1,8 @@
 import { Disposable, EventEmitter } from "vscode";
 
 import { eventBus, EventBusData } from "./eventBus";
-import { createLogger } from "./logger";
 import { disposeAll, VSCodeContext } from "./utils";
 
-const logger = createLogger("ModeManager");
 
 // a representation of the current mode. can be read in different ways using accessors. underlying type is shortname name as returned by `:help mode()`
 export class Mode {
@@ -65,7 +63,6 @@ export class ModeManager implements Disposable {
             eventBus.on(
                 "notify-recording",
                 () => {
-                    logger.debug(`setting recording flag`);
                     this.isRecording = true;
                     VSCodeContext.set("neovim.recording", true);
                 },
@@ -103,14 +100,12 @@ export class ModeManager implements Disposable {
     }
 
     private handleModeChanged([mode]: EventBusData<"mode-changed">) {
-        logger.debug(`Changing mode to ${mode}`);
         this.mode = new Mode(mode);
         if (!this.isInsertMode && this.isRecording) {
             this.isRecording = false;
             VSCodeContext.set("neovim.recording", false);
         }
         VSCodeContext.set("neovim.mode", this.mode.name);
-        logger.debug(`Setting mode context to ${this.mode.name}`);
         this.eventEmitter.fire(null);
     }
 

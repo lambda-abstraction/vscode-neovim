@@ -3,11 +3,8 @@
 import { commands, Disposable, TextEditor, TextEditorEdit, window, workspace } from "vscode";
 
 import { CompositeKeys, config } from "./config";
-import { createLogger } from "./logger";
 import { MainController } from "./main_controller";
 import { disposeAll, normalizeInputString } from "./utils";
-
-const logger = createLogger("TypingManager");
 
 export class TypingManager implements Disposable {
     private disposables: Disposable[] = [];
@@ -189,7 +186,6 @@ export class TypingManager implements Disposable {
             const editor = window.activeTextEditor;
             const documentPromise = editor && this.main.changeManager.getDocumentChangeCompletionLock(editor.document);
             if (documentPromise) {
-                logger.debug(`Waiting for cursor completion operation before disposing type handler`);
                 this.pendingKeysAfterEnter = "";
                 this.isEnteringInsertMode = true;
                 documentPromise.then(async () => {
@@ -198,9 +194,6 @@ export class TypingManager implements Disposable {
                         this.takeOverVSCodeInput = false;
                     }
                     if (this.pendingKeysAfterEnter) {
-                        logger.debug(
-                            `Replaying pending keys after entering insert mode: ${this.pendingKeysAfterEnter}`,
-                        );
                         await commands.executeCommand(this.isInsertMode ? "default:type" : "type", {
                             text: this.pendingKeysAfterEnter,
                         });
@@ -290,10 +283,8 @@ export class TypingManager implements Disposable {
     };
 
     private onSendCommand = async (key: string): Promise<void> => {
-        logger.debug(`Send for: ${key}`);
         this.main.cursorManager.setWantInsertCursorUpdate(window.activeTextEditor, true);
         if (this.isInsertMode && !(await this.client.mode).blocking) {
-            logger.debug(`Syncing buffers with neovim (${key})`);
             await this.main.changeManager.documentChangeLock.waitForUnlock();
             if (window.activeTextEditor)
                 await this.main.cursorManager.updateNeovimCursorPosition(
@@ -303,7 +294,6 @@ export class TypingManager implements Disposable {
                 );
             await this.main.changeManager.syncDotRepeatWithNeovim();
             const keys = normalizeInputString(this.pendingKeysAfterExit);
-            logger.debug(`Pending keys sent with ${key}: ${keys}`);
             this.pendingKeysAfterExit = "";
             await this.client.input(`${key}${keys}`);
         } else {

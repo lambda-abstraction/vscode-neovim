@@ -1,14 +1,10 @@
 import _vscode from "vscode";
 
-import { createLogger } from "./logger";
-
 const vscode = _vscode;
-const logger = createLogger("eval");
 
 // Ensure that the globals are 'used' so that they are not removed at build time
 // and linters do not complain about them.
 void vscode;
-void logger;
 
 /**
  * Execute javascript code passed from lua in an async function context

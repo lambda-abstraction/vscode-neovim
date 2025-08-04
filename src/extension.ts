@@ -4,11 +4,8 @@ import actions from "./actions";
 import { config } from "./config";
 import { EXT_ID } from "./constants";
 import { eventBus } from "./eventBus";
-import { createLogger, logger as rootLogger } from "./logger";
 import { MainController } from "./main_controller";
 import { VSCodeContext, disposeAll } from "./utils";
-
-const logger = createLogger(EXT_ID);
 
 // Store the disposables that need to be disposed of when the extension
 // deactivates and are not affected by the restart command.
@@ -30,12 +27,10 @@ export async function activate(context: vscode.ExtensionContext, isRestart = fal
     }
 
     config.init();
-    rootLogger.init(config.logPath, config.outputToConsole);
     eventBus.init();
     actions.init();
     context.subscriptions.push(
         config,
-        rootLogger,
         eventBus,
         actions,
         new vscode.Disposable(() => VSCodeContext.reset()),
@@ -66,30 +61,23 @@ function verifyExperimentalAffinity(): void {
 
     const affinityConfigWorkspaceValue = affinityConfiguration?.workspaceValue;
     if (affinityConfigWorkspaceValue && EXT_ID in affinityConfigWorkspaceValue) {
-        logger.debug(`Extension affinity value ${affinityConfigWorkspaceValue[EXT_ID]} found in Workspace settings`);
         return;
     }
 
     const affinityConfigGlobalValue = affinityConfiguration?.globalValue;
     if (affinityConfigGlobalValue && EXT_ID in affinityConfigGlobalValue) {
-        logger.debug(`Extension affinity value ${affinityConfigGlobalValue[EXT_ID]} found in User settings`);
         return;
     }
-
-    logger.debug("Extension affinity value not set in User and Workspace settings");
 
     const defaultAffinity = 1;
 
     const setAffinity = (value: number): void => {
-        logger.debug(`Setting extension affinity value to ${value} in User settings`);
         extensionsConfiguration
             .update("experimental.affinity", { ...affinityConfigGlobalValue, [EXT_ID]: value }, true)
             .then(
                 () => {
-                    logger.debug(`Successfull set extension affinity value to ${value} in User settings`);
                 },
                 (error) => {
-                    logger.error(`Error while setting experimental affinity. ${error}`);
                 },
             );
     };

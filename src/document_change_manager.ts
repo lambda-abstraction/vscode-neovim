@@ -9,12 +9,10 @@ import {
     TextDocumentChangeEvent,
     window,
     workspace,
-    LogLevel,
 } from "vscode";
 
 import actions from "./actions";
 import { BufferManager } from "./buffer_manager";
-import { createLogger } from "./logger";
 import { MainController } from "./main_controller";
 import {
     DotRepeatChange,
@@ -29,8 +27,6 @@ import {
     isCursorChange,
     normalizeDotRepeatChange,
 } from "./utils";
-
-const logger = createLogger("DocumentChangeManager");
 
 /**
  * The document content in neovim.
@@ -173,11 +169,6 @@ export class DocumentChangeManager implements Disposable {
     }
 
     private onBufferInit: BufferManager["onBufferInit"] = (bufId, doc, initText, initVersion) => {
-        logger.log(
-            doc.uri,
-            LogLevel.Debug,
-            `Init buffer content for bufId: ${bufId}, uri: ${doc.uri}, version: ${initVersion}`,
-        );
         this.documentContentInNeovim.set(doc, { text: initText, version: initVersion });
     };
 
@@ -190,19 +181,15 @@ export class DocumentChangeManager implements Disposable {
         more,
     ) => {
         const doc = this.main.bufferManager.getTextDocumentForBufferId(bufId);
-        logger.log(doc?.uri, LogLevel.Debug, `Received neovim buffer changed event for bufId: ${bufId}, tick: ${tick}`);
         if (!doc) {
-            logger.log(undefined, LogLevel.Debug, `No text document for buffer: ${bufId}`);
             return;
         }
         const skipTick = this.bufferSkipTicks.get(bufId) || 0;
         if (skipTick >= tick) {
-            logger.log(doc.uri, LogLevel.Debug, `BufId: ${bufId} skipping tick: ${tick}`);
             return;
         }
         // happens after undo
         if (firstLine === lastLine && linedata.length === 0) {
-            logger.log(doc.uri, LogLevel.Debug, `BufId: ${bufId} empty change, skipping`);
             return;
         }
         if (!this.textDocumentChangePromise.has(doc)) {
@@ -218,7 +205,6 @@ export class DocumentChangeManager implements Disposable {
 
     private applyEdits = async (): Promise<void> => {
         this.applyingEdits = true;
-        logger.log(undefined, LogLevel.Debug, `Applying neovim edits`);
         // const edits = this.pendingEvents.splice(0);
         this.applyingEditsProgress.start(
             { location: ProgressLocation.Notification, title: "Applying neovim edits" },
@@ -231,10 +217,8 @@ export class DocumentChangeManager implements Disposable {
                 const [bufId, _tick, firstLine, lastLine, data, _more] = edit;
                 const doc = this.main.bufferManager.getTextDocumentForBufferId(bufId);
                 if (!doc) {
-                    logger.log(undefined, LogLevel.Warning, `No document for ${bufId}, skip`);
                     continue;
                 }
-                logger.log(doc.uri, LogLevel.Debug, `Accumulating edits for ${doc.uri.toString()}, bufId: ${bufId}`);
                 if (!newTextByDoc.get(doc)) {
                     newTextByDoc.set(doc, getDocumentLineArray(doc));
                 }
@@ -289,14 +273,11 @@ export class DocumentChangeManager implements Disposable {
             for (const [doc, newLines] of newTextByDoc) {
                 const lastPromiseIdx = this.textDocumentChangePromise.get(doc)?.length || 0;
                 try {
-                    logger.log(doc.uri, LogLevel.Debug, `Applying edits for ${doc.uri.toString()}`);
                     if (doc.isClosed) {
-                        logger.log(doc.uri, LogLevel.Debug, `Document was closed, skippnig`);
                         continue;
                     }
                     const editor = window.visibleTextEditors.find((e) => e.document === doc);
                     if (!editor) {
-                        logger.log(doc.uri, LogLevel.Debug, `No visible text editor for document, skipping`);
                         continue;
                     }
                     const oldText = doc.getText().replace(/\r\n/g, "\n");
@@ -333,23 +314,14 @@ export class DocumentChangeManager implements Disposable {
                         }
                         this.cursorAfterTextDocumentChange.set(editor.document, editor.selection.active);
                         docPromises.forEach((p) => p.resolve && p.resolve());
-                        logger.log(doc.uri, LogLevel.Debug, `Changes succesfully applied for ${doc.uri.toString()}`);
                         this.documentContentInNeovim.set(doc, { text: doc.getText(), version: doc.version });
                     } else {
                         docPromises.forEach((p) => {
-                            p.promise.catch(() =>
-                                logger.log(
-                                    doc.uri,
-                                    LogLevel.Warning,
-                                    `Edit was canceled for doc: ${doc.uri.toString()}`,
-                                ),
-                            );
+                            p.promise.catch(() => {});
                             p.reject();
                         });
-                        logger.log(doc.uri, LogLevel.Warning, `Changes were not applied for ${doc.uri.toString()}`);
                     }
                 } catch (e) {
-                    logger.log(doc.uri, LogLevel.Error, `Error applying neovim edits, error: ${(e as Error).message}`);
                 }
             }
         }
@@ -393,11 +365,9 @@ export class DocumentChangeManager implements Disposable {
 
         this.documentContentInNeovim.set(doc, { text: change.text, version: change.version });
 
-        logger.log(doc.uri, LogLevel.Debug, `Change text document for: ${doc.uri}`);
         const editor = window.visibleTextEditors.find((e) => e.document === doc);
         const bufId = this.main.bufferManager.getBufferIdForTextDocument(doc);
         if (!bufId) {
-            logger.log(doc.uri, LogLevel.Warning, `No neovim buffer for ${doc.uri}`);
             return;
         }
 
@@ -413,9 +383,7 @@ export class DocumentChangeManager implements Disposable {
         }
 
         const skipVersion = this.documentSkipVersionOnChange.get(doc) ?? 0;
-        logger.log(doc.uri, LogLevel.Debug, `Version: ${version}, skipVersion: ${skipVersion}`);
         if (skipVersion >= version) {
-            logger.log(doc.uri, LogLevel.Debug, `Skipping a change since versions equals`);
             return;
         }
 
@@ -450,13 +418,11 @@ export class DocumentChangeManager implements Disposable {
 
         const bufTick: number = await this.client.request("nvim_buf_get_changedtick", [bufId]);
         if (!bufTick) {
-            logger.log(doc.uri, LogLevel.Warning, `Can't get changed tick for bufId: ${bufId}, deleted?`);
             return;
         }
 
         this.bufferSkipTicks.set(bufId, bufTick + changeArgs.length);
 
-        logger.log(doc.uri, LogLevel.Debug, `Setting wantInsertCursorUpdate to false`);
         if (editor) this.main.cursorManager.setWantInsertCursorUpdate(editor, false);
 
         await actions.lua("handle_changes", bufId, changeArgs);

@@ -16,7 +16,6 @@ import {
 import actions from "./actions";
 import { config } from "./config";
 import { eventBus, EventBusData } from "./eventBus";
-import { createLogger } from "./logger";
 import { MainController } from "./main_controller";
 import {
     convertEditorPositionToVimPosition,
@@ -27,7 +26,6 @@ import {
 } from "./utils";
 import { PendingUpdates } from "./utils/pending_updates";
 
-const logger = createLogger("CursorManager", false);
 
 interface CursorInfo {
     cursorShape: "block" | "horizontal" | "vertical";
@@ -220,10 +218,8 @@ export class CursorManager implements Disposable {
                 continue;
             }
 
-            logger.debug(`Received cursor update from neovim, gridId: ${gridId}`);
             const editor = this.main.bufferManager.getEditorFromGridId(gridId);
             if (!editor) {
-                logger.warn(`No editor for gridId: ${gridId}`);
                 continue;
             }
             // lock typing in editor until cursor update is complete
@@ -250,7 +246,6 @@ export class CursorManager implements Disposable {
     public updateCursorPosInEditor = async (editor: TextEditor, gridId: number): Promise<void> => {
         // !For text changes neovim sends first buf_lines_event followed by redraw event
         // !But since changes are asynchronous and will happen after redraw event we need to wait for them first
-        logger.debug(`Waiting for document change completion before setting the editor cursor`);
         await this.main.changeManager.getDocumentChangeCompletionLock(editor.document);
 
         if (
@@ -258,7 +253,6 @@ export class CursorManager implements Disposable {
             !this.wantInsertCursorUpdate(editor) &&
             !this.main.modeManager.isRecordingInInsertMode
         ) {
-            logger.debug(`Skipping insert cursor update in editor`);
             this.cursorUpdatePromise.get(editor)?.resolve();
             this.cursorUpdatePromise.delete(editor);
             return;
@@ -273,14 +267,12 @@ export class CursorManager implements Disposable {
         } else {
             const win = this.main.bufferManager.getWinIdForTextEditor(editor);
             if (!win) {
-                logger.warn(`No window for editor`);
                 return;
             }
             try {
                 const ranges = await actions.lua("get_selections", win);
                 selections = rangesToSelections(ranges, editor.document);
             } catch (e) {
-                logger.error(e);
                 return;
             }
         }
@@ -314,9 +306,6 @@ export class CursorManager implements Disposable {
 
         const { textEditor, kind } = e;
         // ! Note: Unfortunately navigating from outline is Command kind, so we can't skip it :(
-        logger.debug(
-            `onSelectionChanged, kind: ${kind}, editor: ${textEditor.document.uri.fsPath}, active: [${textEditor.selection.active.line}, ${textEditor.selection.active.character}]`,
-        );
 
         // when dragging mouse, pre-emptively hide cursor to not clash with fake cursor
         if (kind === TextEditorSelectionChangeKind.Mouse && !textEditor.selection.isEmpty) {
@@ -364,13 +353,10 @@ export class CursorManager implements Disposable {
         this.updateEditorCursorStyle(this.main.modeManager.currentMode.name);
 
         // wait for possible layout updates first
-        logger.debug(`Waiting for possible layout completion operation`);
         await this.main.bufferManager.waitForLayoutSync();
         // wait for possible change document events
-        logger.debug(`Waiting for possible document change completion operation`);
         await this.main.changeManager.getDocumentChangeCompletionLock(editor.document);
         await this.main.changeManager.documentChangeLock.waitForUnlock();
-        logger.debug(`Waiting done`);
 
         const selection = editor.selection;
         const isSingleSelection = editor.selections.length === 1;
@@ -378,14 +364,7 @@ export class CursorManager implements Disposable {
         // ignore selection change caused by buffer edit
         const documentChange = this.main.changeManager.eatDocumentCursorAfterChange(editor.document);
         if (documentChange && documentChange.isEqual(selection.active)) {
-            logger.debug(`Skipping onSelectionChanged event since it was selection produced by doc change`);
         } else {
-            logger.debug(
-                `Applying changed selection, kind: ${kind},  cursor: [${selection.active.line}, ${
-                    selection.active.character
-                }], isSingleSelection: ${isSingleSelection}`,
-            );
-
             if (selection.isEmpty) {
                 // exit visual mode when clicking mouse elsewhere or cancelling selection
                 const isMouseChange = kind === TextEditorSelectionChangeKind.Mouse;
@@ -421,11 +400,9 @@ export class CursorManager implements Disposable {
         if (!winId) return;
         const neovimCursorPos = this.neovimCursorPosition.get(editor);
         if (skipSameCursorUpdate && neovimCursorPos && neovimCursorPos.active.isEqual(active)) {
-            logger.debug(`Skipping event since neovim has same cursor pos`);
             return;
         }
         const pos = convertEditorPositionToVimPosition(editor, active);
-        logger.debug(`Updating cursor pos in neovim, winId: ${winId}, pos: [${pos.line}, ${pos.character}]`);
         const vimPos = [pos.line + 1, pos.character]; // nvim_win_set_cursor is [1, 0] based
         try {
             await this.client.request("nvim_win_set_cursor", [winId, vimPos]); // a little faster
@@ -435,7 +412,6 @@ export class CursorManager implements Disposable {
             // 2. The document is a textEditor, but it cannot accept input, it's meaningless to use the extension.
             // In the document, going out-of-sync and cursor position errors are not significant.
             if (!config.autoGeneratedDocumentSchemes.includes(editor.document.uri.scheme)) {
-                logger.error(`${(e as Error).message}`);
             }
         }
     }
@@ -448,7 +424,6 @@ export class CursorManager implements Disposable {
         if (!bufId) return;
         const neovimCursorPos = this.neovimCursorPosition.get(editor);
         if (neovimCursorPos?.isEqual(selection)) {
-            logger.debug(`Skipping event since neovim has same visual pos`);
             return;
         }
         const anchor = selection.anchor;
